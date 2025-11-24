@@ -376,63 +376,6 @@
             color: #6c757d;
         }
 
-        /* Translation Tabs Styles */
-        .translation-tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-            border-bottom: 2px solid var(--border-color);
-        }
-
-        .tab-button {
-            padding: 10px 20px;
-            border: none;
-            background: transparent;
-            color: var(--secondary-text-color);
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
-            transition: all 0.2s;
-        }
-
-        .tab-button:hover {
-            color: var(--primary-color);
-        }
-
-        .tab-button.active {
-            color: var(--primary-color);
-            border-bottom-color: var(--primary-color);
-        }
-
-        .translation-container {
-            display: none;
-        }
-
-        .translation-container.active {
-            display: block;
-        }
-
-        .translate-btn {
-            background-color: #ff6b35;
-            border-color: #ff6b35;
-        }
-
-        .translate-btn:hover {
-            background-color: #e55a2b;
-        }
-
-        .translate-btn:disabled {
-            background-color: #ccc;
-            border-color: #ccc;
-        }
-
-        .translate-btn.loading {
-            opacity: 0.7;
-            cursor: wait;
-        }
-
         .translated-text {
             color: #666;
             font-style: italic;
@@ -448,22 +391,12 @@
     <div class="container">
         <header>
             <h1>Teams Transcript</h1>
-            <div class="translation-tabs">
-                <button id="tab-original" class="tab-button active" data-tab="original">Оригинал (EN)</button>
-                <button id="tab-translated" class="tab-button" data-tab="translated">Перевод (RU)</button>
-            </div>
             <div class="controls">
                 <input type="search" id="search-box" placeholder="Search transcript..." aria-label="Search transcript">
                 <div id="speaker-filters" class="speaker-filters">
                     <button id="show-all-btn" class="active" aria-label="Show all speakers">Show All</button>
                 </div>
                 <div class="export-controls">
-                    <button id="translate-btn" class="export-btn translate-btn" title="Перевести транскрипт на русский">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/>
-                        </svg>
-                        Перевести
-                    </button>
                     <button id="copy-all-btn" class="export-btn" title="Copy visible transcript to clipboard">
                         <svg viewBox="0 0 24 24" fill="currentColor">
                             <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
@@ -485,11 +418,8 @@
                 </div>
             </div>
         </header>
-        <main id="captions-container" class="translation-container active">
+        <main id="captions-container">
             <div class="status-message">Loading captions...</div>
-        </main>
-        <main id="translated-container" class="translation-container">
-            <div class="status-message">Перевод не выполнен. Нажмите кнопку "Перевести" для перевода транскрипта.</div>
         </main>
     </div>
     

@@ -1,24 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Elements ---
     const captionsContainer = document.getElementById('captions-container');
-    const translatedContainer = document.getElementById('translated-container');
     const searchBox = document.getElementById('search-box');
     const speakerFiltersContainer = document.getElementById('speaker-filters');
     const copyAllBtn = document.getElementById('copy-all-btn');
     const saveAllBtn = document.getElementById('save-all-btn');
     const historyBtn = document.getElementById('history-btn');
-    const translateBtn = document.getElementById('translate-btn');
-    const tabOriginal = document.getElementById('tab-original');
-    const tabTranslated = document.getElementById('tab-translated');
     const sessionModal = document.getElementById('sessionModal');
     const sessionListModal = document.getElementById('sessionListModal');
     const closeModal = document.querySelector('.close-modal');
 
     // --- State ---
     let allCaptions = [];
-    let translatedCaptions = [];
-    let currentView = 'original'; // 'original' or 'translated'
-    let isTranslating = false;
+    let translationQueue = [];
+    let translationQueueSet = new Set();
+    let translationWorkerActive = false;
     let searchDebounceTimer = null;
     let meetingStartTime = null;
     let meetingEndTime = null;
@@ -34,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Yandex Translate API Key ---
     const YANDEX_API_KEY = typeof YANDEX_TRANSLATE_API_KEY;
+    const TRANSLATION_LOADING_TEXT = 'Перевод загружается...';
 
     // --- Utility ---
     function escapeHtml(str) {
@@ -60,11 +57,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // Add to data array
         allCaptions.push(caption);
         
-        // Check if we have translation for this caption
-        const translated = translatedCaptions[allCaptions.length - 1]?.TranslatedText || null;
+        const translation = caption.TranslatedText || null;
         
         // Create HTML for new caption
-        const newCaptionHTML = createCaptionHTML(caption, allCaptions.length - 1, translated);
+        const newCaptionHTML = createCaptionHTML(caption, allCaptions.length - 1, translation);
         
         // Remove "no captions" message if it exists
         const statusMessage = captionsContainer.querySelector('.status-message');
@@ -72,32 +68,30 @@ document.addEventListener('DOMContentLoaded', () => {
             statusMessage.remove();
         }
         
-        // Append to DOM (only if viewing original)
-        if (currentView === 'original') {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = newCaptionHTML;
-            const newCaptionElement = tempDiv.firstElementChild;
-            captionsContainer.appendChild(newCaptionElement);
-            
-            // Apply search filter if active
-            if (activeSearch) {
-                const matchesSearch = caption.Text.toLowerCase().includes(activeSearch.toLowerCase()) ||
-                                     caption.Name.toLowerCase().includes(activeSearch.toLowerCase());
-                if (!matchesSearch) {
-                    newCaptionElement.style.display = 'none';
-                } else {
-                    highlightSearchTerm(newCaptionElement, activeSearch);
-                }
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = newCaptionHTML;
+        const newCaptionElement = tempDiv.firstElementChild;
+        captionsContainer.appendChild(newCaptionElement);
+        
+        // Apply search filter if active
+        if (activeSearch) {
+            const matchesSearch = caption.Text.toLowerCase().includes(activeSearch.toLowerCase()) ||
+                                 caption.Name.toLowerCase().includes(activeSearch.toLowerCase());
+            if (!matchesSearch) {
+                newCaptionElement.style.display = 'none';
+            } else {
+                highlightSearchTerm(newCaptionElement, activeSearch);
             }
-            
-            // Auto-scroll if enabled
-            if (autoScroll) {
-                newCaptionElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
-            }
+        }
+        
+        // Auto-scroll if enabled
+        if (autoScroll) {
+            newCaptionElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
         }
         
         // Update analytics
         updateAnalyticsIncremental(caption);
+        enqueueTranslation(allCaptions.length - 1);
         
         // Update export button states
         updateExportButtonStates();
@@ -120,6 +114,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const index = allCaptions.findIndex(c => c.key === caption.key);
         if (index !== -1) {
             allCaptions[index] = caption;
+            delete allCaptions[index].TranslatedText;
+            updateCaptionTranslation(index, null);
+            enqueueTranslation(index);
         }
     }
     
@@ -202,9 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
             </svg>`;
         
-        const translatedSection = translatedText 
-            ? `<p class="text translated-text">${escapeHtml(translatedText)}</p>` 
-            : '';
+        const translatedSection = `<p class="text translated-text" data-translation-status="${translatedText ? 'ready' : 'pending'}">${escapeHtml(translatedText || TRANSLATION_LOADING_TEXT)}</p>`;
         
         return `
             <div class="caption" data-speaker="${escapeHtml(item.Name)}" data-index="${index}">
@@ -222,44 +217,16 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    function createTranslatedCaptionHTML(item, index) {
-        const copyIconSVG = `
-            <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-            </svg>`;
-        
-        return `
-            <div class="caption" data-speaker="${escapeHtml(item.Name)}" data-index="${index}">
-                <button class="copy-btn" title="Copy this line" aria-label="Copy this line">
-                    ${copyIconSVG}
-                    <span class="tooltip-text">Copy</span>
-                </button>
-                <div class="caption-header">
-                    <span class="name">${escapeHtml(item.Name)}</span>
-                    <span class="time">${escapeHtml(item.Time)}</span>
-                </div>
-                <p class="text">${escapeHtml(item.TranslatedText || item.Text)}</p>
-            </div>
-        `;
-    }
-
     function renderCaptions(transcriptArray) {
         allCaptions = transcriptArray;
-        
-        if (currentView === 'original') {
-            const htmlContent = transcriptArray.map((item, index) => {
-                const translated = translatedCaptions[index]?.TranslatedText || null;
-                return createCaptionHTML(item, index, translated);
-            }).join('');
-            captionsContainer.innerHTML = htmlContent || '<p class="status-message">No captions to display.</p>';
-        } else {
-            const htmlContent = translatedCaptions.length > 0
-                ? translatedCaptions.map((item, index) => createTranslatedCaptionHTML(item, index)).join('')
-                : '<p class="status-message">Перевод не выполнен. Нажмите кнопку "Перевести" для перевода транскрипта.</p>';
-            translatedContainer.innerHTML = htmlContent;
-        }
-        
+        const htmlContent = transcriptArray.map((item, index) => {
+            const translated = item.TranslatedText || null;
+            return createCaptionHTML(item, index, translated);
+        }).join('');
+        captionsContainer.innerHTML = htmlContent || '<p class="status-message">No captions to display.</p>';
+        applyFilters();
         updateExportButtonStates();
+        transcriptArray.forEach((item, index) => enqueueTranslation(index));
     }
 
     function populateSpeakerFilters(transcriptArray) {
@@ -291,8 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const activeSpeakerFilter = speakerFiltersContainer.querySelector('button.active');
         const speakerToFilter = activeSpeakerFilter?.id === 'show-all-btn' ? null : activeSpeakerFilter?.dataset.speaker;
 
-        const container = currentView === 'original' ? captionsContainer : translatedContainer;
-        container.querySelectorAll('.caption').forEach(captionDiv => {
+        captionsContainer.querySelectorAll('.caption').forEach(captionDiv => {
             const text = captionDiv.querySelector('.text').textContent.toLowerCase();
             const speaker = captionDiv.dataset.speaker;
 
@@ -347,7 +313,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!captionData) return;
 
-        const textToCopy = `[${captionData.Time}] ${captionData.Name}: ${captionData.Text}`;
+        const translationPart = captionData.TranslatedText ? `\n${captionData.TranslatedText}` : '';
+        const textToCopy = `[${captionData.Time}] ${captionData.Name}: ${captionData.Text}${translationPart}`;
         try {
             await navigator.clipboard.writeText(textToCopy);
             copyButton.classList.add('copied');
@@ -371,16 +338,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Export Functions ---
     function getVisibleCaptions() {
-        const container = currentView === 'original' ? captionsContainer : translatedContainer;
-        const sourceArray = currentView === 'original' ? allCaptions : translatedCaptions;
         const visibleCaptions = [];
-        const captionElements = container.querySelectorAll('.caption');
+        const captionElements = captionsContainer.querySelectorAll('.caption');
         
         captionElements.forEach(captionElement => {
             if (captionElement.style.display !== 'none') {
                 const index = parseInt(captionElement.dataset.index, 10);
-                if (!isNaN(index) && sourceArray[index]) {
-                    visibleCaptions.push(sourceArray[index]);
+                if (!isNaN(index) && allCaptions[index]) {
+                    visibleCaptions.push(allCaptions[index]);
                 }
             }
         });
@@ -392,19 +357,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!captions || captions.length === 0) {
             return 'No captions to export.';
         }
-        
-        // Use translated text if available and we're in translated view
-        const useTranslated = currentView === 'translated';
-        
+
         if (format === 'markdown') {
             return captions.map(entry => {
-                const text = useTranslated && entry.TranslatedText ? entry.TranslatedText : entry.Text;
-                return `**${entry.Name}** (${entry.Time}): ${text}`;
+                const originalLine = `**${entry.Name}** (${entry.Time}): ${entry.Text}`;
+                const translatedLine = entry.TranslatedText ? `\n\n_${entry.TranslatedText}_` : '';
+                return `${originalLine}${translatedLine}`;
             }).join('\n\n');
         } else {
             return captions.map(entry => {
-                const text = useTranslated && entry.TranslatedText ? entry.TranslatedText : entry.Text;
-                return `[${entry.Time}] ${entry.Name}: ${text}`;
+                const header = `[${entry.Time}] ${entry.Name}: ${entry.Text}`;
+                const translation = entry.TranslatedText ? `\n${entry.TranslatedText}` : '';
+                return `${header}${translation}`;
             }).join('\n');
         }
     }
@@ -547,6 +511,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Translation Functions ---
     async function translateText(text) {
         if (!text || text.trim() === '') return text;
+        if (!YANDEX_API_KEY || YANDEX_API_KEY === 'undefined') {
+            console.warn('[Translation] API ключ не задан. Возвращаю оригинал.');
+            return text;
+        }
         
         try {
             const url = `https://translate.yandex.net/api/v1.5/tr.json/translate?key=${YANDEX_API_KEY}&text=${encodeURIComponent(text)}&lang=en-ru`;
@@ -567,107 +535,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function translateAllCaptions() {
-        if (isTranslating || allCaptions.length === 0) return;
-        
-        isTranslating = true;
-        translateBtn.disabled = true;
-        translateBtn.classList.add('loading');
-        translateBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg> Перевожу...';
-        
-        try {
-            translatedCaptions = [];
-            
-            // Translate in batches to avoid API limits
-            const batchSize = 10;
-            for (let i = 0; i < allCaptions.length; i += batchSize) {
-                const batch = allCaptions.slice(i, i + batchSize);
-                const translations = await Promise.all(
-                    batch.map(async (caption) => {
-                        try {
-                            const translatedText = await translateText(caption.Text);
-                            return {
-                                ...caption,
-                                TranslatedText: translatedText
-                            };
-                        } catch (error) {
-                            console.error(`[Translation] Failed to translate caption ${i}:`, error);
-                            return {
-                                ...caption,
-                                TranslatedText: caption.Text // Fallback to original
-                            };
-                        }
-                    })
-                );
-                
-                translatedCaptions.push(...translations);
-                
-                // Update progress
-                const progress = Math.min(100, Math.round((translatedCaptions.length / allCaptions.length) * 100));
-                translateBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg> Перевожу... ${progress}%`;
+    function enqueueTranslation(index) {
+        if (!allCaptions[index] || allCaptions[index].TranslatedText) return;
+        if (translationQueueSet.has(index)) return;
+        translationQueue.push(index);
+        translationQueueSet.add(index);
+        processTranslationQueue();
+    }
+
+    async function processTranslationQueue() {
+        if (translationWorkerActive || translationQueue.length === 0) return;
+        translationWorkerActive = true;
+
+        while (translationQueue.length > 0) {
+            const index = translationQueue.shift();
+            translationQueueSet.delete(index);
+            const caption = allCaptions[index];
+            if (!caption || caption.TranslatedText) continue;
+
+            try {
+                const translatedText = await translateText(caption.Text);
+                allCaptions[index].TranslatedText = translatedText;
+                updateCaptionTranslation(index, translatedText);
+            } catch (error) {
+                console.error(`[Translation] Failed to translate caption at index ${index}:`, error);
+                updateCaptionTranslation(index, caption.Text);
             }
-            
-            // Render translated view
-            if (currentView === 'translated') {
-                renderCaptions(allCaptions);
-            } else {
-                // Update original view with translations below
-                renderCaptions(allCaptions);
-            }
-            
-            translateBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg> Переведено ✓';
-            translateBtn.classList.remove('loading');
-            translateBtn.classList.add('success');
-            
-            // Switch to translated tab if not already there
-            if (currentView === 'original') {
-                switchView('translated');
-            }
-            
-        } catch (error) {
-            console.error('[Translation] Failed to translate:', error);
-            alert('Ошибка при переводе. Проверьте API ключ и подключение к интернету.');
-            translateBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg> Перевести';
-            translateBtn.classList.remove('loading');
-        } finally {
-            isTranslating = false;
-            translateBtn.disabled = false;
-            
-            // Reset button text after 3 seconds
-            setTimeout(() => {
-                if (translateBtn.innerHTML.includes('Переведено')) {
-                    translateBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg> Перевести';
-                    translateBtn.classList.remove('success');
-                }
-            }, 3000);
+        }
+
+        translationWorkerActive = false;
+
+        if (translationQueue.length > 0) {
+            processTranslationQueue();
         }
     }
 
-    function switchView(viewType) {
-        currentView = viewType;
-        
-        // Update tabs
-        if (viewType === 'original') {
-            tabOriginal.classList.add('active');
-            tabTranslated.classList.remove('active');
-            captionsContainer.classList.add('active');
-            translatedContainer.classList.remove('active');
-        } else {
-            tabOriginal.classList.remove('active');
-            tabTranslated.classList.add('active');
-            captionsContainer.classList.remove('active');
-            translatedContainer.classList.add('active');
-            
-            // Render translated view if not already rendered
-            if (translatedCaptions.length === 0 && allCaptions.length > 0) {
-                translateAllCaptions();
-            } else if (translatedCaptions.length > 0) {
-                renderCaptions(allCaptions);
-            }
+    function updateCaptionTranslation(index, translatedText) {
+        const captionElement = captionsContainer.querySelector(`.caption[data-index="${index}"]`);
+        if (!captionElement) return;
+        let translatedElement = captionElement.querySelector('.translated-text');
+        if (!translatedElement) {
+            translatedElement = document.createElement('p');
+            translatedElement.className = 'text translated-text';
+            captionElement.appendChild(translatedElement);
         }
-        
-        // Reapply filters
-        applyFilters();
+        translatedElement.textContent = translatedText || TRANSLATION_LOADING_TEXT;
+        translatedElement.dataset.translationStatus = translatedText ? 'ready' : 'pending';
     }
 
     // --- Initialization ---
@@ -675,12 +588,8 @@ document.addEventListener('DOMContentLoaded', () => {
         searchBox.addEventListener('input', debouncedApplyFilters);
         speakerFiltersContainer.addEventListener('click', handleSpeakerFilterClick);
         captionsContainer.addEventListener('click', handleCopyClick);
-        translatedContainer.addEventListener('click', handleCopyClick);
         copyAllBtn.addEventListener('click', handleCopyAllClick);
         saveAllBtn.addEventListener('click', handleSaveAllClick);
-        translateBtn.addEventListener('click', translateAllCaptions);
-        tabOriginal.addEventListener('click', () => switchView('original'));
-        tabTranslated.addEventListener('click', () => switchView('translated'));
         
         // Session history handlers
         historyBtn.addEventListener('click', showSessionHistory);
