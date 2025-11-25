@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let updateTimer = null;
 
     // --- Yandex Translate API Key ---
-    const YANDEX_API_KEY = typeof YANDEX_TRANSLATE_API_KEY;
+    const YANDEX_API_KEY = YANDEX_TRANSLATE_API_KEY;
     const TRANSLATION_LOADING_TEXT = 'Перевод загружается...';
 
     // --- Utility ---
@@ -199,7 +199,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
             </svg>`;
         
-        const translatedSection = `<p class="text translated-text" data-translation-status="${translatedText ? 'ready' : 'pending'}">${escapeHtml(translatedText || TRANSLATION_LOADING_TEXT)}</p>`;
+        // Всегда создаем элемент перевода, но скрываем его если перевода нет (null означает ошибку)
+        // Если translatedText === null, это означает ошибку - скрываем
+        // Если translatedText === undefined или пустая строка, показываем "Перевод загружается..."
+        const displayStyle = translatedText === null ? 'none' : 'block';
+        const textToShow = translatedText === null ? '' : (translatedText || TRANSLATION_LOADING_TEXT);
+        const translatedSection = `<p class="text translated-text" data-translation-status="${translatedText ? 'ready' : 'pending'}" style="display: ${displayStyle};">${escapeHtml(textToShow)}</p>`;
         
         return `
             <div class="caption" data-speaker="${escapeHtml(item.Name)}" data-index="${index}">
@@ -511,9 +516,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Translation Functions ---
     async function translateText(text) {
         if (!text || text.trim() === '') return text;
-        if (!YANDEX_API_KEY || YANDEX_API_KEY === 'undefined') {
-            console.warn('[Translation] API ключ не задан. Возвращаю оригинал.');
-            return text;
+        if (!YANDEX_API_KEY || YANDEX_API_KEY === 'undefined' || typeof YANDEX_API_KEY === 'undefined') {
+            console.warn('[Translation] API ключ не задан.');
+            throw new Error('API ключ не задан');
         }
         
         try {
@@ -540,6 +545,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (translationQueueSet.has(index)) return;
         translationQueue.push(index);
         translationQueueSet.add(index);
+        // Показываем "Перевод загружается..." когда начинаем перевод
+        updateCaptionTranslation(index, '');
         processTranslationQueue();
     }
 
@@ -555,11 +562,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
             try {
                 const translatedText = await translateText(caption.Text);
-                allCaptions[index].TranslatedText = translatedText;
-                updateCaptionTranslation(index, translatedText);
+                // Проверяем, что перевод действительно отличается от оригинала
+                if (translatedText && translatedText !== caption.Text) {
+                    allCaptions[index].TranslatedText = translatedText;
+                    updateCaptionTranslation(index, translatedText);
+                } else {
+                    // Если перевод вернул оригинал (API ключ не задан или ошибка), не показываем перевод
+                    updateCaptionTranslation(index, null);
+                }
             } catch (error) {
                 console.error(`[Translation] Failed to translate caption at index ${index}:`, error);
-                updateCaptionTranslation(index, caption.Text);
+                // При ошибке не показываем оригинальный текст в переведенном разделе
+                updateCaptionTranslation(index, null);
             }
         }
 
@@ -574,11 +588,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const captionElement = captionsContainer.querySelector(`.caption[data-index="${index}"]`);
         if (!captionElement) return;
         let translatedElement = captionElement.querySelector('.translated-text');
+        
+        if (translatedText === null) {
+            // Если перевод не удался, скрываем элемент перевода
+            if (translatedElement) {
+                translatedElement.style.display = 'none';
+            }
+            return;
+        }
+        
         if (!translatedElement) {
             translatedElement = document.createElement('p');
             translatedElement.className = 'text translated-text';
             captionElement.appendChild(translatedElement);
         }
+        
+        translatedElement.style.display = 'block';
         translatedElement.textContent = translatedText || TRANSLATION_LOADING_TEXT;
         translatedElement.dataset.translationStatus = translatedText ? 'ready' : 'pending';
     }
