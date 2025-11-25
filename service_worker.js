@@ -454,6 +454,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 console.warn('[Teams Caption Saver] Error logged:', message.error);
                 // Could implement error reporting here
                 break;
+                
+            case 'translate_text':
+                (async () => {
+                    try {
+                        const { text, apiKey } = message;
+                        if (!text || text.trim() === '') {
+                            sendResponse({ success: false, error: 'Empty text' });
+                            return;
+                        }
+                        if (!apiKey || apiKey === 'undefined' || typeof apiKey === 'undefined') {
+                            sendResponse({ success: false, error: 'API ключ не задан' });
+                            return;
+                        }
+                        
+                        const url = `https://translate.yandex.net/api/v1.5/tr.json/translate?key=${apiKey}&text=${encodeURIComponent(text)}&lang=en-ru`;
+                        const response = await fetch(url);
+                        
+                        if (!response.ok) {
+                            throw new Error(`Translation API error: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        if (data.code === 200 && data.text && data.text.length > 0) {
+                            sendResponse({ success: true, translatedText: data.text[0] });
+                        } else {
+                            sendResponse({ success: false, error: 'Invalid API response', originalText: text });
+                        }
+                    } catch (error) {
+                        console.error('[Service Worker] Translation error:', error);
+                        sendResponse({ success: false, error: error.message });
+                    }
+                })();
+                return true; // Indicates async response
         }
     })();
     

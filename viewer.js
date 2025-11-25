@@ -522,18 +522,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         try {
-            const url = `https://translate.yandex.net/api/v1.5/tr.json/translate?key=${YANDEX_API_KEY}&text=${encodeURIComponent(text)}&lang=en-ru`;
-            const response = await fetch(url);
+            const response = await chrome.runtime.sendMessage({
+                message: 'translate_text',
+                text: text,
+                apiKey: YANDEX_API_KEY
+            });
             
-            if (!response.ok) {
-                throw new Error(`Translation API error: ${response.status}`);
+            if (response && response.success) {
+                return response.translatedText;
+            } else {
+                throw new Error(response?.error || 'Translation failed');
             }
-            
-            const data = await response.json();
-            if (data.code === 200 && data.text && data.text.length > 0) {
-                return data.text[0];
-            }
-            return text;
         } catch (error) {
             console.error('[Translation] Error:', error);
             throw error;
