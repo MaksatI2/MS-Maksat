@@ -27,7 +27,7 @@ function applyAliasesToAttendeeReport(attendeeReport, aliases = {}) {
     if (!attendeeReport || Object.keys(aliases).length === 0) {
         return attendeeReport;
     }
-
+    
     // Create a new report with aliased names
     const aliasedReport = {
         ...attendeeReport,
@@ -44,21 +44,21 @@ function applyAliasesToAttendeeReport(attendeeReport, aliases = {}) {
             name: aliases[event.name]?.trim() || event.name
         }))
     };
-
+    
     return aliasedReport;
 }
 
 // --- Formatting Functions ---
 function formatAsTxt(transcript, attendeeReport) {
     let content = '';
-
+    
     console.log('[Teams Caption Saver] formatAsTxt called with:', {
         transcriptLength: transcript?.length,
         hasAttendeeReport: !!attendeeReport,
         attendeeCount: attendeeReport?.totalUniqueAttendees || 0,
         attendeeList: attendeeReport?.attendeeList || []
     });
-
+    
     // Add attendee information if available
     if (attendeeReport && attendeeReport.totalUniqueAttendees > 0) {
         content += '=== MEETING ATTENDEES ===\n';
@@ -70,14 +70,14 @@ function formatAsTxt(transcript, attendeeReport) {
         });
         content += '\n=== TRANSCRIPT ===\n';
     }
-
+    
     content += transcript.map(entry => `[${entry.Time}] ${entry.Name}: ${entry.Text}`).join('\n');
     return content;
 }
 
 function formatAsMarkdown(transcript, attendeeReport) {
     let content = '';
-
+    
     // Add attendee information if available
     if (attendeeReport && attendeeReport.totalUniqueAttendees > 0) {
         content += '# Meeting Attendees\n\n';
@@ -89,7 +89,7 @@ function formatAsMarkdown(transcript, attendeeReport) {
         });
         content += '\n---\n\n# Transcript\n\n';
     }
-
+    
     let lastSpeaker = null;
     content += transcript.map(entry => {
         if (entry.Name !== lastSpeaker) {
@@ -98,13 +98,13 @@ function formatAsMarkdown(transcript, attendeeReport) {
         }
         return `> ${entry.Text}`;
     }).join('\n').trim();
-
+    
     return content;
 }
 
 function formatAsDoc(transcript, attendeeReport) {
     let body = '';
-
+    
     // Add attendee information if available
     if (attendeeReport && attendeeReport.totalUniqueAttendees > 0) {
         body += '<h2>Meeting Attendees</h2>';
@@ -116,20 +116,20 @@ function formatAsDoc(transcript, attendeeReport) {
         });
         body += '</ul><hr><h2>Transcript</h2>';
     }
-
+    
     body += transcript.map(entry =>
         `<p><b>${escapeHtml(entry.Name)}</b> (<i>${escapeHtml(entry.Time)}</i>): ${escapeHtml(entry.Text)}</p>`
     ).join('');
-
+    
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Meeting Transcript</title></head><body>${body}</body></html>`;
 }
 
 async function formatForAi(transcript, meetingName, recordingStartTime, attendeeReport) {
     const { aiInstructions = '' } = await chrome.storage.sync.get('aiInstructions');
     const date = recordingStartTime ? new Date(recordingStartTime) : new Date();
-
+    
     let metadataHeader = `Meeting Title: ${meetingName}\nDate: ${date.toLocaleString()}`;
-
+    
     // Add attendee information if available
     if (attendeeReport && attendeeReport.totalUniqueAttendees > 0) {
         metadataHeader += `\nTotal Attendees: ${attendeeReport.totalUniqueAttendees}`;
@@ -138,23 +138,23 @@ async function formatForAi(transcript, meetingName, recordingStartTime, attendee
             metadataHeader += `\n- ${name}`;
         });
     }
-
+    
     const transcriptText = transcript.map(entry => `[${entry.Time}] ${entry.Name}: ${entry.Text}`).join('\n\n');
 
     let finalContent = aiInstructions ? `${aiInstructions}\n\n---\n\n` : '';
     finalContent += `${metadataHeader}\n\n---\n\n${transcriptText}`;
-
+    
     return finalContent;
 }
 
 // A simple HTML escaper for the .doc format
 function escapeHtml(str) {
     return str.replace(/&/g, "&")
-        .replace(/</g, "<")
-        .replace(/>/g, ">")
-        .replace(/"/g, "&quot;")
-        //   .replace(/'/g, "'");
-        .replace(/'/g, "&#039;");
+              .replace(/</g, "<")
+              .replace(/>/g, ">")
+              .replace(/"/g, "&quot;")
+            //   .replace(/'/g, "'");
+              .replace(/'/g, "&#039;");
 }
 
 // --- Core Actions ---
@@ -165,7 +165,7 @@ async function downloadFile(filename, content, mimeType, saveAs) {
         filename: filename,
         saveAs: saveAs
     });
-
+    
     // Notify viewer that transcript was saved
     try {
         const tabs = await chrome.tabs.query({});
@@ -184,7 +184,7 @@ async function generateFilename(pattern, meetingTitle, format, attendeeReport) {
     const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
     const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS
     const attendeeCount = attendeeReport ? attendeeReport.totalUniqueAttendees : 0;
-
+    
     const replacements = {
         '{date}': dateStr,
         '{time}': timeStr,
@@ -192,22 +192,22 @@ async function generateFilename(pattern, meetingTitle, format, attendeeReport) {
         '{format}': format,
         '{attendees}': attendeeCount > 0 ? `${attendeeCount}_attendees` : ''
     };
-
+    
     let filename = pattern || '{date}_{title}_{format}';
     for (const [key, value] of Object.entries(replacements)) {
         filename = filename.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), value);
     }
-
+    
     // Clean up any double underscores or trailing underscores
     filename = filename.replace(/__+/g, '_').replace(/_+$/, '');
-
+    
     return filename;
 }
 
 async function saveTranscript(meetingTitle, transcriptArray, aliases, format, recordingStartTime, saveAsPrompt, attendeeReport = null) {
     const processedTranscript = applyAliasesToTranscript(transcriptArray, aliases);
     const processedAttendeeReport = applyAliasesToAttendeeReport(attendeeReport, aliases);
-
+    
     // Get filename pattern from settings
     const { filenamePattern } = await chrome.storage.sync.get('filenamePattern');
     const filename = await generateFilename(filenamePattern, meetingTitle, format, processedAttendeeReport);
@@ -249,7 +249,7 @@ async function saveTranscript(meetingTitle, transcriptArray, aliases, format, re
             mimeType = 'text/plain';
             break;
     }
-
+    
     // Add extension to filename
     const fullFilename = `${filename}.${extension}`;
     downloadFile(fullFilename, content, mimeType, saveAsPrompt);
@@ -287,21 +287,21 @@ function chunkArray(array, chunkSize) {
 // Helper function to calculate duration
 function calculateDuration(transcriptArray) {
     if (!transcriptArray || transcriptArray.length === 0) return '0 min';
-
+    
     try {
         const firstTime = new Date(transcriptArray[0].Time);
         const lastTime = new Date(transcriptArray[transcriptArray.length - 1].Time);
-
+        
         // Check if dates are valid
         if (isNaN(firstTime.getTime()) || isNaN(lastTime.getTime())) {
             // Fallback: estimate based on caption count (avg 3 seconds per caption)
             const estimatedMinutes = Math.round((transcriptArray.length * 3) / 60);
             return `~${estimatedMinutes} min`;
         }
-
+        
         const durationMs = lastTime - firstTime;
         const minutes = Math.round(durationMs / 60000);
-
+        
         if (minutes < 60) {
             return `${minutes} min`;
         } else {
@@ -336,7 +336,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const transcriptArray = message.transcriptArray;
                     const meetingTitle = message.meetingTitle;
                     const attendeeReport = message.attendeeReport;
-
+                    
                     // Create session metadata
                     const metadata = {
                         id: sessionId,
@@ -351,7 +351,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         attendeeCount: attendeeReport?.totalUniqueAttendees || 0,
                         preview: transcriptArray.slice(0, 3).map(c => `${c.Name}: ${c.Text.substring(0, 50)}`).join(' | ')
                     };
-
+                    
                     // Save transcript in chunks to avoid size limits
                     const chunks = chunkArray(transcriptArray, 100); // 100 items per chunk
                     for (let i = 0; i < chunks.length; i++) {
@@ -360,18 +360,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         });
                     }
                     metadata.chunkCount = chunks.length;
-
+                    
                     // Save attendee report if exists
                     if (attendeeReport) {
                         await chrome.storage.local.set({
                             [`${sessionId}_attendees`]: attendeeReport
                         });
                     }
-
+                    
                     // Update session index
                     const { session_index = [] } = await chrome.storage.local.get('session_index');
                     session_index.push(metadata);
-
+                    
                     // Keep only last 10 sessions
                     if (session_index.length > 10) {
                         const toDelete = session_index.shift();
@@ -383,18 +383,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         keysToDelete.push(`${toDelete.id}_attendees`);
                         await chrome.storage.local.remove(keysToDelete);
                     }
-
+                    
                     // Sort by timestamp (newest first)
                     session_index.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+                    
                     await chrome.storage.local.set({ 'session_index': session_index });
                     console.log('[Service Worker] Session saved to history:', sessionId);
-
+                    
                 } catch (error) {
                     console.error('[Service Worker] Failed to save session:', error);
                 }
                 break;
-
+                
             case 'download_captions':
                 console.log('[Teams Caption Saver] Download request received:', {
                     format: message.format,
@@ -408,16 +408,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'save_on_leave':
                 // Generate unique ID for this save request
                 const saveId = `${message.meetingTitle}_${message.recordingStartTime}`;
-
+                
                 // Prevent duplicate saves
                 if (autoSaveInProgress || lastAutoSaveId === saveId) {
                     console.log('Auto-save already in progress or completed for this meeting, skipping...');
                     break;
                 }
-
+                
                 autoSaveInProgress = true;
                 lastAutoSaveId = saveId;
-
+                
                 try {
                     const settings = await chrome.storage.sync.get(['autoSaveOnEnd', 'defaultSaveFormat']);
                     if (settings.autoSaveOnEnd && message.transcriptArray.length > 0) {
@@ -438,7 +438,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'display_captions':
                 await createViewerTab(message.transcriptArray);
                 break;
-
+            
             case 'update_badge_status':
                 updateBadge(message.capturing);
                 // Reset auto-save state when starting a new capture session
@@ -448,18 +448,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     console.log('New capture session started, auto-save state reset.');
                 }
                 break;
-
+                
             case 'error_logged':
                 // Central error logging - could send to analytics service
                 console.warn('[Teams Caption Saver] Error logged:', message.error);
                 // Could implement error reporting here
                 break;
-
-
-            // translate_text handler removed — viewer now calls Yandex Translate API directly
-                // (Old background translation handler removed as it's no longer used.)
         }
     })();
-
-    return true;
+    
+    return true; // Indicates that the response will be sent asynchronously
 });
