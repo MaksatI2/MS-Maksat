@@ -97,6 +97,30 @@
             color: #666;
         }
 
+        /* Translation toggle button */
+        #translate-toggle {
+            margin-left: 10px;
+            background: #28a745;
+            color: white;
+            transition: all 0.3s ease;
+            padding: 6px 14px;
+            border: 1px solid #28a745;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        #translate-toggle:not(.active) {
+            background: #ccc;
+            color: #666;
+            border-color: #ccc;
+        }
+        
+        #translate-toggle:hover {
+            opacity: 0.9;
+        }
+
         .controls {
             display: flex;
             flex-wrap: wrap;
@@ -227,6 +251,16 @@
         }
         .text {
             color: var(--primary-text-color);
+        }
+        
+        /* Translation styles */
+        .translation {
+            color: #6c757d;
+            font-style: italic;
+            margin-top: 8px;
+            padding-left: 10px;
+            border-left: 3px solid #28a745;
+            display: none;
         }
 
         .copy-btn {
@@ -376,6 +410,7 @@
             color: #6c757d;
         }
     </style>
+    <script src="config.js"></script>
     <script src="viewer.js" defer></script>
 </head>
 <body>
@@ -386,6 +421,7 @@
                 <input type="search" id="search-box" placeholder="Search transcript..." aria-label="Search transcript">
                 <div id="speaker-filters" class="speaker-filters">
                     <button id="show-all-btn" class="active" aria-label="Show all speakers">Show All</button>
+                    <button id="translate-toggle" aria-label="Toggle translation">Перевод: ВЫКЛ</button>
                 </div>
                 <div class="export-controls">
                     <button id="copy-all-btn" class="export-btn" title="Copy visible transcript to clipboard">

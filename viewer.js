@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sessionModal = document.getElementById('sessionModal');
     const sessionListModal = document.getElementById('sessionListModal');
     const closeModal = document.querySelector('.close-modal');
+    const translateToggle = document.getElementById('translate-toggle');
 
     // --- State ---
     let allCaptions = [];
@@ -25,11 +26,131 @@ document.addEventListener('DOMContentLoaded', () => {
     let pendingUpdates = [];
     let updateTimer = null;
 
+    // Translation state
+    let translationEnabled = false;
+    let translationCache = new Map();
+    let translationQueue = [];
+    let isTranslating = false;
+
     // --- Utility ---
     function escapeHtml(str) {
         const p = document.createElement("p");
         p.textContent = str;
         return p.innerHTML;
+    }
+    
+    // --- Translation Functions ---
+    async function translateText(text) {
+        // Check cache first
+        if (translationCache.has(text)) {
+            return translationCache.get(text);
+        }
+
+        try {
+            const response = await fetch('https://translate.api.cloud.yandex.net/translate/v2/translate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Api-Key ${YANDEX_TRANSLATE_API_KEY}`
+                },
+                body: JSON.stringify({
+                    folderId: YANDEX_FOLDER_ID,
+                    texts: [text],
+                    targetLanguageCode: 'ru'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Translation failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const translatedText = data.translations[0].text;
+            
+            // Cache the translation
+            translationCache.set(text, translatedText);
+            
+            return translatedText;
+        } catch (error) {
+            console.error('Translation error:', error);
+            return null;
+        }
+    }
+
+    async function processTranslationQueue() {
+        if (isTranslating || translationQueue.length === 0) return;
+        
+        isTranslating = true;
+        
+        while (translationQueue.length > 0) {
+            const { index, text, captionElement } = translationQueue.shift();
+            
+            const translated = await translateText(text);
+            
+            if (translated && captionElement) {
+                // Add translation under the original text
+                let translationDiv = captionElement.querySelector('.translation');
+                if (!translationDiv) {
+                    translationDiv = document.createElement('p');
+                    translationDiv.className = 'translation';
+                    captionElement.appendChild(translationDiv);
+                }
+                translationDiv.textContent = translated;
+                translationDiv.style.display = translationEnabled ? 'block' : 'none';
+            }
+            
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        isTranslating = false;
+    }
+
+    function queueTranslation(index, text, captionElement) {
+        if (!translationEnabled) return;
+        
+        // Check if already in queue or cached
+        if (translationCache.has(text)) {
+            const translated = translationCache.get(text);
+            let translationDiv = captionElement.querySelector('.translation');
+            if (!translationDiv) {
+                translationDiv = document.createElement('p');
+                translationDiv.className = 'translation';
+                captionElement.appendChild(translationDiv);
+            }
+            translationDiv.textContent = translated;
+            translationDiv.style.display = 'block';
+            return;
+        }
+        
+        translationQueue.push({ index, text, captionElement });
+        processTranslationQueue();
+    }
+
+    function toggleTranslations(enabled) {
+        translationEnabled = enabled;
+        
+        if (enabled) {
+            // Show existing translations and queue new ones
+            document.querySelectorAll('.caption').forEach(captionElement => {
+                const index = parseInt(captionElement.dataset.index, 10);
+                const caption = allCaptions[index];
+                
+                if (caption) {
+                    const translationDiv = captionElement.querySelector('.translation');
+                    if (translationDiv) {
+                        translationDiv.style.display = 'block';
+                    } else {
+                        queueTranslation(index, caption.Text, captionElement);
+                    }
+                }
+            });
+        } else {
+            // Hide all translations
+            document.querySelectorAll('.translation').forEach(div => {
+                div.style.display = 'none';
+            });
+        }
     }
     
     // --- Helper Functions ---
@@ -65,6 +186,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const newCaptionElement = tempDiv.firstElementChild;
         captionsContainer.appendChild(newCaptionElement);
         
+        // Queue translation if enabled
+        if (translationEnabled) {
+            queueTranslation(allCaptions.length - 1, caption.Text, newCaptionElement);
+        }
+        
         // Apply search filter if active
         if (activeSearch) {
             const matchesSearch = caption.Text.toLowerCase().includes(activeSearch.toLowerCase()) ||
@@ -98,6 +224,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const textElement = captionElement.querySelector('.text');
             if (textElement) {
                 textElement.textContent = caption.Text;
+            }
+            
+            // Update translation if enabled
+            if (translationEnabled) {
+                const index = allCaptions.findIndex(c => c.key === caption.key);
+                queueTranslation(index, caption.Text, captionElement);
             }
         }
         
@@ -207,6 +339,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const htmlContent = transcriptArray.map(createCaptionHTML).join('');
         captionsContainer.innerHTML = htmlContent || '<p class="status-message">No captions to display.</p>';
         updateExportButtonStates();
+        
+        // Translate all captions if translation is enabled
+        if (translationEnabled && transcriptArray.length > 0) {
+            document.querySelectorAll('.caption').forEach(captionElement => {
+                const index = parseInt(captionElement.dataset.index, 10);
+                const caption = allCaptions[index];
+                if (caption) {
+                    queueTranslation(index, caption.Text, captionElement);
+                }
+            });
+        }
     }
 
     function populateSpeakerFilters(transcriptArray) {
@@ -215,7 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Get existing speaker buttons (to track what we already have)
         const existingSpeakers = new Set();
-        speakerFiltersContainer.querySelectorAll('button:not(#show-all-btn)').forEach(btn => {
+        speakerFiltersContainer.querySelectorAll('button:not(#show-all-btn):not(#translate-toggle)').forEach(btn => {
             existingSpeakers.add(btn.dataset.speaker);
         });
         
@@ -226,7 +369,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.textContent = speaker;
                 btn.dataset.speaker = speaker;
                 btn.setAttribute('aria-label', `Filter by ${speaker}`);
-                speakerFiltersContainer.appendChild(btn);
+                speakerFiltersContainer.insertBefore(btn, translateToggle);
             }
         });
     }
@@ -234,7 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Interactivity & Filtering ---
     function applyFilters() {
         const searchTerm = searchBox.value.toLowerCase().trim();
-        activeSearch = searchTerm; // Store for live updates
+        activeSearch = searchTerm;
         const activeSpeakerFilter = speakerFiltersContainer.querySelector('button.active');
         const speakerToFilter = activeSpeakerFilter?.id === 'show-all-btn' ? null : activeSpeakerFilter?.dataset.speaker;
 
@@ -248,7 +391,6 @@ document.addEventListener('DOMContentLoaded', () => {
             captionDiv.style.display = (matchesSearch && matchesSpeaker) ? 'block' : 'none';
         });
         
-        // Update export button states
         updateExportButtonStates();
     }
     
@@ -259,7 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
         copyAllBtn.disabled = !hasVisibleCaptions;
         saveAllBtn.disabled = !hasVisibleCaptions;
         
-        // Update titles with count
         copyAllBtn.title = hasVisibleCaptions 
             ? `Copy ${visibleCount} visible caption(s) to clipboard`
             : 'No visible captions to copy';
@@ -276,9 +417,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleSpeakerFilterClick(e) {
-        if (e.target.tagName !== 'BUTTON') return;
+        if (e.target.tagName !== 'BUTTON' || e.target.id === 'translate-toggle') return;
         
-        speakerFiltersContainer.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        speakerFiltersContainer.querySelectorAll('button:not(#translate-toggle)').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
         applyFilters();
     }
@@ -302,11 +443,10 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 copyButton.classList.remove('copied');
                 copyButton.querySelector('.tooltip-text').textContent = 'Copy';
-            }, 1500); // TODO: Extract to TIMING constant
+            }, 1500);
         } catch (err) {
             console.error('Failed to copy text: ', err);
             copyButton.querySelector('.tooltip-text').textContent = 'Copy failed';
-            // Show user-friendly error
             const errorMsg = document.createElement('div');
             errorMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #dc3545; color: white; padding: 10px; border-radius: 4px; z-index: 1000;';
             errorMsg.textContent = 'Failed to copy text to clipboard';
@@ -372,7 +512,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Create download
         const content = formatTranscriptForExport(visibleCaptions);
         const now = new Date();
         const dateStr = now.toISOString().split('T')[0];
@@ -393,7 +532,6 @@ document.addEventListener('DOMContentLoaded', () => {
             showButtonSuccess(saveAllBtn, 'Saved!', 'Save');
             showNotification(`Saved ${visibleCaptions.length} caption(s) to ${filename}`, 'success');
             
-            // Update meeting ended message to show it's been saved
             if (document.getElementById('meeting-ended-message')) {
                 await addMeetingEndedMessage(true);
             }
@@ -416,7 +554,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function showNotification(message, type = 'info') {
-        // Remove existing notification if any
         const existingNotification = document.getElementById('notification');
         if (existingNotification) {
             existingNotification.remove();
@@ -448,7 +585,6 @@ document.addEventListener('DOMContentLoaded', () => {
             animation: slideInFromRight 0.3s ease-out;
         `;
         
-        // Add slide-in animation
         const style = document.createElement('style');
         style.textContent = `
             @keyframes slideInFromRight {
@@ -487,6 +623,16 @@ document.addEventListener('DOMContentLoaded', () => {
         copyAllBtn.addEventListener('click', handleCopyAllClick);
         saveAllBtn.addEventListener('click', handleSaveAllClick);
         
+        // Translation toggle
+        if (translateToggle) {
+            translateToggle.addEventListener('click', () => {
+                translationEnabled = !translationEnabled;
+                translateToggle.classList.toggle('active', translationEnabled);
+                translateToggle.textContent = `Перевод: ${translationEnabled ? 'ВКЛ' : 'ВЫКЛ'}`;
+                toggleTranslations(translationEnabled);
+            });
+        }
+        
         // Session history handlers
         historyBtn.addEventListener('click', showSessionHistory);
         closeModal.addEventListener('click', () => sessionModal.style.display = 'none');
@@ -505,7 +651,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     async function loadSessionHistory() {
         try {
-            // Check if SessionManager already exists or load it
             if (typeof SessionManager === 'undefined') {
                 const script = document.createElement('script');
                 script.src = chrome.runtime.getURL('sessionManager.js');
@@ -551,27 +696,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const sessionManager = new SessionManager();
             const sessionData = await sessionManager.loadSession(sessionId);
             
-            // Close modal
             sessionModal.style.display = 'none';
             
-            // Load the transcript
             allCaptions = sessionData.transcript;
-            isLiveStreaming = false; // Historical data, not live
+            isLiveStreaming = false;
             
-            // Update title
             document.querySelector('h1').innerHTML = `${escapeHtml(sessionData.metadata.title)} <span style="font-size: 0.5em; color: #666;">(Historical)</span>`;
             
-            // Calculate and display analytics
             const analytics = calculateAnalytics(allCaptions);
             if (analytics) {
                 displayAnalytics(analytics);
             }
             
-            // Render the transcript
             renderCaptions(allCaptions);
             populateSpeakerFilters(allCaptions);
             
-            // Clear any live indicators
             const liveIndicator = document.getElementById('live-indicator');
             if (liveIndicator) {
                 liveIndicator.classList.remove('active');
@@ -605,22 +744,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function initialize() {
         try {
-            // Check if we have captions passed via storage (from popup)
             const result = await chrome.storage.local.get(['captionsToView', 'viewerData']);
             let transcript = result.captionsToView;
             let viewerData = result.viewerData;
             
-            // Use viewerData if captionsToView is not available
             if (!transcript && viewerData && viewerData.transcriptArray) {
                 transcript = viewerData.transcriptArray;
-                // Update title if it's historical data
                 if (viewerData.isHistorical && viewerData.meetingTitle) {
                     document.querySelector('h1').innerHTML = `${escapeHtml(viewerData.meetingTitle)} <span style="font-size: 0.5em; color: #666;">(Historical)</span>`;
                 }
             }
 
             if (transcript && transcript.length > 0) {
-                // Calculate and display analytics
                 const analytics = calculateAnalytics(transcript);
                 if (analytics) {
                     displayAnalytics(analytics);
@@ -630,41 +765,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateSpeakerFilters(transcript);
                 setupEventListeners();
                 
-                // Setup live streaming after initial load
                 setupLiveStreaming();
                 
-                // Check if this is a completed meeting (not live)
-                // If we have captions but no live connection after setup, show meeting ended
                 setTimeout(async () => {
                     if (!isLiveStreaming && transcript.length > 0) {
                         await addMeetingEndedMessage();
                     }
                 }, 1000);
             } else {
-                // Check if user navigated directly to the page
                 const isDirectNavigation = !result.captionsToView;
                 if (isDirectNavigation) {
                     captionsContainer.innerHTML = '<p class="status-message">No transcript data available.<br><br>Please use the "View Transcript" button in the extension popup to load a transcript.</p>';
                 } else {
                     captionsContainer.innerHTML = '<p class="status-message">Waiting for live captions...</p>';
-                    // Still setup live streaming even if no initial captions
                     setupLiveStreaming();
                 }
+                setupEventListeners();
             }
         } catch (error) {
             console.error("Error loading captions:", error);
             captionsContainer.innerHTML = '<p class="status-message">Unable to load captions. Please try opening the extension popup again.</p>';
         } finally {
-            // Clean up storage to prevent re-displaying on next open
             chrome.storage.local.remove(['captionsToView', 'viewerData']);
         }
     }
     
-    async function addMeetingEndedMessage() {
-        // Check if message already exists
+    async function addMeetingEndedMessage(saved = false) {
         if (document.getElementById('meeting-ended-message')) return;
         
-        // Check if auto-save is enabled
         const { autoSaveOnEnd } = await chrome.storage.sync.get('autoSaveOnEnd');
         
         const endedMessage = document.createElement('div');
@@ -688,7 +816,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         captionsContainer.appendChild(endedMessage);
         
-        // Auto-scroll to show the message
         if (autoScroll) {
             endedMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
         }
@@ -703,14 +830,13 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Live Streaming Setup ---
     async function setupLiveStreaming() {
-        // Check if content script is available and streaming
         try {
             const tabs = await chrome.tabs.query({ url: "https://teams.microsoft.com/*" });
             if (tabs.length > 0) {
                 const response = await chrome.tabs.sendMessage(tabs[0].id, { message: "viewer_ready" });
                 if (response && response.streaming) {
                     isLiveStreaming = true;
-                    lastUpdateTime = Date.now(); // Initialize timestamp
+                    lastUpdateTime = Date.now();
                     updateLiveIndicator();
                     console.log("Connected to live caption stream");
                 }
@@ -719,36 +845,29 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log("Content script not ready for streaming:", error);
         }
         
-        // Setup message listener for live updates
         chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             if (request.message === "live_caption_update") {
                 isLiveStreaming = true;
-                lastUpdateTime = Date.now(); // Update timestamp when receiving messages
+                lastUpdateTime = Date.now();
                 queueUpdate(request);
                 
-                // Remove "Meeting Ended" message if we're receiving updates again
                 removeMeetingEndedMessage();
             } else if (request.message === "live_attendee_update") {
-                // Handle attendee updates if needed
                 console.log("Attendee update:", request);
-                lastUpdateTime = Date.now(); // Update timestamp for attendee updates too
+                lastUpdateTime = Date.now();
             } else if (request.message === "meeting_ended") {
-                // Handle explicit meeting end signal
                 isLiveStreaming = false;
                 updateLiveIndicator();
                 await addMeetingEndedMessage();
             }
         });
         
-        // Setup auto-scroll toggle
         setupAutoScrollToggle();
         
-        // Heartbeat to check connection
         setInterval(checkConnectionStatus, 5000);
     }
     
     function setupAutoScrollToggle() {
-        // Create auto-scroll toggle button
         const searchContainer = document.querySelector('.search-container');
         if (searchContainer && !document.getElementById('auto-scroll-toggle')) {
             const autoScrollBtn = document.createElement('button');
@@ -767,28 +886,24 @@ document.addEventListener('DOMContentLoaded', () => {
     async function checkConnectionStatus() {
         if (!isLiveStreaming) return;
         
-        // Check if we're still receiving updates
         const timeSinceLastUpdate = Date.now() - lastUpdateTime;
-        if (timeSinceLastUpdate > 30000) { // 30 seconds without updates
+        if (timeSinceLastUpdate > 30000) {
             isLiveStreaming = false;
             updateLiveIndicator();
             console.log("Lost connection to live stream");
             
-            // Add "Meeting Ended" message
             await addMeetingEndedMessage();
             
-            // Try to reconnect
             const tabs = await chrome.tabs.query({ url: "https://teams.microsoft.com/*" });
             if (tabs.length > 0) {
                 try {
                     const response = await chrome.tabs.sendMessage(tabs[0].id, { message: "viewer_ready" });
                     if (response && response.streaming) {
                         isLiveStreaming = true;
-                        lastUpdateTime = Date.now(); // Reset timeout
+                        lastUpdateTime = Date.now();
                         updateLiveIndicator();
                         console.log("Reconnected to live stream");
                         
-                        // Remove "Meeting Ended" message if reconnected
                         removeMeetingEndedMessage();
                     }
                 } catch (error) {
@@ -805,7 +920,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const speakerStats = {};
         let totalWords = 0;
         
-        // Calculate speaker statistics
         captions.forEach(caption => {
             const speaker = caption.Name;
             const words = caption.Text.split(/\s+/).length;
@@ -825,7 +939,6 @@ document.addEventListener('DOMContentLoaded', () => {
             totalWords += words;
         });
         
-        // Calculate percentages
         Object.keys(speakerStats).forEach(speaker => {
             speakerStats[speaker].wordPercentage = ((speakerStats[speaker].wordCount / totalWords) * 100).toFixed(1);
         });
@@ -841,10 +954,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function displayAnalytics(analytics) {
         if (!analytics) return;
         
-        // Check if analytics container already exists
         let analyticsContainer = document.getElementById('meeting-analytics');
         
-        // Sort speakers by word count
         const sortedSpeakers = Object.entries(analytics.speakerStats)
             .sort((a, b) => b[1].wordCount - a[1].wordCount);
         
@@ -891,14 +1002,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
         `;
         
-        // Update existing analytics or create new one
         const container = document.getElementById('captions-container');
         
         if (analyticsContainer) {
-            // Update existing analytics
             analyticsContainer.innerHTML = analyticsHTML;
         } else {
-            // Create new analytics container
             analyticsContainer = document.createElement('div');
             analyticsContainer.id = 'meeting-analytics';
             analyticsContainer.style.cssText = 'background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 8px; border: 1px solid #dee2e6;';
@@ -909,13 +1017,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
-        // Ctrl/Cmd + F for search focus
         if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
             e.preventDefault();
             searchBox.focus();
         }
         
-        // Escape to clear search
         if (e.key === 'Escape' && document.activeElement === searchBox) {
             searchBox.value = '';
             applyFilters();

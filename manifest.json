@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MS Maksat Service",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Capture and save live captions from Microsoft Teams meetings on the web. Features include various save formats, AI summaries, and automation.",
   "icons": {
     "16": "icon.png",
@@ -17,7 +17,7 @@
 
   "host_permissions": [
     "https://teams.microsoft.com/*",
-    "https://translate.yandex.net/*"
+    "https://translate.api.cloud.yandex.net/*"
   ],
 
   "action": {
